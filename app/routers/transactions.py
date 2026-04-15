@@ -27,6 +27,11 @@ def create_transaction(
     return transaction_store.create(payload)
 
 
+@router.get("/summary/overview", response_model=FinanceSummary)
+def get_summary(transaction_store: TransactionStore = Depends(get_store)) -> FinanceSummary:
+    return transaction_store.summary()
+
+
 @router.get("/{transaction_id}", response_model=Transaction)
 def get_transaction(transaction_id: UUID, transaction_store: TransactionStore = Depends(get_store)) -> Transaction:
     transaction = transaction_store.get(transaction_id)
@@ -53,8 +58,3 @@ def delete_transaction(transaction_id: UUID, transaction_store: TransactionStore
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get("/summary/overview", response_model=FinanceSummary)
-def get_summary(transaction_store: TransactionStore = Depends(get_store)) -> FinanceSummary:
-    return transaction_store.summary()
