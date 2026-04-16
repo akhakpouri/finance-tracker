@@ -302,3 +302,29 @@ finance-tracker/
 - Alembic autogenerate for migrations
 - `asynccontextmanager` for database session lifecycle
 - FastAPI's automatic OpenAPI spec generation
+
+## Project Memory System
+
+Project knowledge is tracked in `docs/project-notes/`:
+
+| File | Purpose |
+|------|---------|
+| `bugs.md` | Bug log with root causes and fixes |
+| `decisions.md` | Architectural decision records (ADRs) |
+| `facts.md` | Project config, constants, and reference info |
+| `issues.md` | Work log with GitHub issue references |
+
+### Memory-Aware Protocols
+
+**Before proposing architectural changes:**
+- Check `docs/project-notes/decisions.md` for existing decisions.
+- Verify the proposed approach doesn't conflict with past choices.
+
+**When encountering errors or bugs:**
+- Search `docs/project-notes/bugs.md` for similar issues.
+- Apply known fixes if found.
+- Document new bugs and solutions when resolved.
+
+**When looking up project configuration:**
+- Check `docs/project-notes/facts.md` for credentials, ports, URLs, connection strings, and other configuration.
+- Prefer documented facts over assumptions.
