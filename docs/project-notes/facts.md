@@ -2,41 +2,56 @@
 
 Key configuration values, constants, and reference info. Check here before assuming defaults.
 
+> Note: the project pivoted from Python/FastAPI to Go on 2026-06-22. See ADR-007.
+
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Backend framework | FastAPI (Python 3.12+) |
-| ORM | SQLAlchemy (async) |
+| Language | Go 1.26 |
+| HTTP framework | Gin (`github.com/gin-gonic/gin`) |
+| ORM | GORM (`gorm.io/gorm`) + PostgreSQL driver (`gorm.io/driver/postgres`) |
 | Database | PostgreSQL |
-| Migrations | Alembic |
-| Auth | JWT (python-jose or PyJWT) + bcrypt |
-| Validation | Pydantic v2 |
-| Testing | pytest + FastAPI TestClient |
-| Config | Pydantic Settings (env-based) |
-| Package manager | uv (preferred) or poetry |
+| Migrations | GORM `AutoMigrate` over the model structs, run via `apps/migration` (no raw SQL) |
+| Auth | JWT (`github.com/golang-jwt/jwt/v5`) + bcrypt (`golang.org/x/crypto/bcrypt`) |
+| Validation | Gin binding / go-playground/validator (`binding:"..."` tags) |
+| Money | `github.com/shopspring/decimal` |
+| IDs | `github.com/google/uuid` |
+| Config | env vars + optional `.env` (`github.com/joho/godotenv`) |
+| Testing | stdlib `testing` + `net/http/httptest` + test database |
 | Frontend | TypeScript, framework TBD |
+
+## Modules (go.work)
+
+| Module path | Directory | Role |
+|-------------|-----------|------|
+| `github.com/akhakpouri/finance-tracker/api` | `api/` | HTTP API application |
+| `github.com/akhakpouri/finance-tracker/internal/shared` | `internal/shared/` | Shared data layer (models, repositories, DB connection) |
+| `github.com/akhakpouri/finance-tracker/apps/migration` | `apps/migration/` | Runs GORM AutoMigrate over the shared models |
+| `github.com/akhakpouri/finance-tracker/apps/worker` | `apps/worker/` | Background worker (future) |
 
 ## Conventions
 
-- Type hints on all function signatures, return types, and variables
-- Async by default (`async def` for handlers, services, repositories)
+- Idiomatic Go: `gofmt`/`goimports` clean, exported identifiers documented
+- Errors are values: wrap with `%w`, inspect with `errors.Is`/`errors.As`
+- `context.Context` is the first parameter of every repository and service method; thread it via `db.WithContext(ctx)`
+- Constructor injection, no package-level/global DB or singletons
 - One file per concern
-- Schemas (Pydantic DTOs) strictly separated from Models (SQLAlchemy entities)
-- Dependency injection via FastAPI `Depends()`
-- Every schema change goes through Alembic migrations
+- DTOs (request/response structs) strictly separated from Models (GORM entities)
+- `internal/shared` imports nothing app-specific (no Gin/HTTP)
+- Every schema change is made on the GORM model structs and applied by running `apps/migration` (`AutoMigrate`) — no manual SQL/`ALTER`
 
 ## Environment Variables
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| DATABASE_URL | Async PostgreSQL connection string | `postgresql+asyncpg://user:pass@localhost:5432/finance` |
-| SECRET_KEY | JWT signing key | (generate a secure random value) |
-| DEBUG | Enable debug mode | `true` / `false` |
-| APP_NAME | Application name | `Finance Tracker` |
+| DATABASE_URL | PostgreSQL connection string | `postgres://user:pass@localhost:5432/finance?sslmode=disable` |
+| JWT_SECRET | JWT signing key | (generate a secure random value) |
+| PORT | API HTTP port | `8080` |
 | API_PREFIX | API route prefix | `/api/v1` |
+| DEBUG | Verbose SQL/logging | `true` / `false` |
 
-## Domain Enums
+## Domain Enums (Go named string types)
 
 - **AccountType:** checking, savings, credit_card, cash
 - **TransactionType:** income, expense, transfer
