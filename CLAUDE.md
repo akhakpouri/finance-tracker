@@ -2,143 +2,107 @@
 
 ## Project Overview
 
-A full-stack personal finance tracker built as a **monorepo** containing a **FastAPI** (Python) backend API and a **TypeScript** frontend application. This is a learning project designed to translate existing Go and C# architectural patterns into idiomatic Python while building something with real depth — not a toy CRUD app.
+A full-stack personal finance tracker built as a **multi-module Go monorepo** with a **Go** backend API and a **TypeScript** frontend. The data layer is extracted into a shared module so multiple backend processes — the HTTP API today, a background worker later — can reuse the same models and repositories. This is a real application with domain depth, not a toy CRUD app.
 
 ## Developer Context
 
-- **Background**: Experienced in Go (current) and C# (prior). Strong grasp of OOP, layered architecture, repository pattern, and typed systems.
-- **Goal**: First Python application. Learn FastAPI and Python idioms by mapping familiar patterns (repositories, services, handlers, DTOs) into the Python ecosystem.
-- **Preference**: Start with class-based patterns that feel familiar (repositories as classes, services as classes), then refactor toward more Pythonic approaches over time as comfort grows.
+- **Background**: Experienced in Go (primary) and C# (prior). Strong grasp of OOP, layered architecture, the repository pattern, and typed systems.
+- **Goal**: Build a non-trivial, well-structured Go application end to end — clean module boundaries, a shared data layer, an HTTP API, and an eventual background worker — while practicing idiomatic Go.
+- **Preference**: Start with the familiar repository/service/handler layering (interfaces defined producer-side, in the shared module) and refactor toward more idiomatic Go (e.g. consumer-defined interfaces) as comfort grows. The developer writes the code; assistance is guidance, review, and structure unless explicitly asked to implement.
 
 ## Tech Stack
 
-### Backend (api/)
+### Backend (Go)
 
-- **Framework**: FastAPI
-- **Language**: Python 3.12+
-- **ORM**: SQLAlchemy (async) with SQLModel or raw SQLAlchemy models
+- **Language**: Go 1.26
+- **HTTP framework**: Gin (`github.com/gin-gonic/gin`)
+- **ORM**: GORM (`gorm.io/gorm`) with the PostgreSQL driver (`gorm.io/driver/postgres`)
 - **Database**: PostgreSQL
-- **Migrations**: Alembic
-- **Auth**: JWT (python-jose or PyJWT) + bcrypt for password hashing
-- **Validation**: Pydantic v2 (built into FastAPI)
-- **Testing**: pytest + FastAPI TestClient + test database
-- **Config**: Pydantic Settings (environment-based)
+- **Migrations**: GORM `AutoMigrate` driven by the model structs, run via the `apps/migration` command (no raw SQL)
+- **Auth**: JWT (`github.com/golang-jwt/jwt/v5`) + bcrypt (`golang.org/x/crypto/bcrypt`) for password hashing
+- **Validation**: Gin's binding via go-playground/validator (`binding:"..."` struct tags)
+- **Money**: `github.com/shopspring/decimal` (never `float64` for amounts)
+- **IDs**: `github.com/google/uuid`
+- **Config**: environment variables, optionally loaded from `.env` in local dev (`github.com/joho/godotenv`)
+- **Testing**: standard `testing` + `net/http/httptest`, plus a test database
 
 ### Frontend (web/)
 
 - **Language**: TypeScript
 - **Framework**: TBD — evaluating React (Next.js), Angular, or Vue.js (Nuxt). Decision pending.
-- **Considerations**: Angular maps closest to the C#/OOP mindset (built-in DI, services, opinionated structure). React/Next.js has the larger ecosystem and more FastAPI tutorial overlap. Vue/Nuxt is the middle ground.
+- **Considerations**: Angular maps closest to the C#/OOP mindset (built-in DI, services, opinionated structure). React/Next.js has the larger ecosystem. Vue/Nuxt is the middle ground.
 
 ## Architecture
 
-Layered architecture mirroring Go/C# conventions:
+Layered architecture, consistent with the developer's Go/C# background:
 
 ```
-Routers (Handlers) → Services → Repositories → Database
-            ↕               ↕
-        Schemas (DTOs)    Models (Entities)
+Handlers (Gin) → Services → Repositories → Database
+        ↕              ↕
+     DTOs          Models (Entities)
 ```
 
-- **Models**: SQLAlchemy ORM classes representing database tables.
-- **Schemas**: Pydantic models for request/response validation (the DTO equivalent).
-- **Repositories**: Data access layer. Encapsulate all database queries. One repository per aggregate root.
-- **Services**: Business logic layer. Orchestrate repositories, enforce rules, perform calculations.
-- **Routers**: HTTP layer. Parse requests, call services, return responses. No business logic here.
-- **Dependencies**: FastAPI's `Depends()` for injecting services, database sessions, and the authenticated user.
+- **Models**: GORM structs representing database tables. Live in the shared module.
+- **DTOs**: Request/response structs with `json` and `binding` tags. Live per-consumer (the API owns its DTOs).
+- **Repositories**: Data access layer. Encapsulate all database queries. One repository per aggregate root. Defined and implemented in the shared module so both the API and the worker reuse them.
+- **Services**: Business logic. Orchestrate repositories, enforce rules, perform calculations. Owned by each consuming app.
+- **Handlers**: HTTP layer (Gin). Parse/bind requests, call services, write the response envelope. No business logic.
+- **Dependency wiring**: Plain constructor injection (`NewXxx(db)`, `NewService(repo)`), wired together in each app's `main`. No DI framework.
 
 ## Project Structure
 
-Monorepo with `api/` and `web/` as sibling directories, each fully self-contained with their own dependency manifests. Neither is nested inside the other — they can be built and deployed independently.
+A **multi-module Go workspace** (`go.work`) at the repo root. Each module has its own `go.mod` and dependency set; the workspace resolves cross-module imports locally without `replace` directives. The shared data layer lives under `internal/` so it is importable by every sibling module in this repo but by nothing outside it (Go's `internal/` visibility rule).
 
 ```
 finance-tracker/
+├── go.work                         # workspace: api, internal/shared, apps/migration, apps/worker
 ├── README.md
-├── claude.md
+├── CLAUDE.md
 ├── .gitignore
 │
-├── api/                                   # Python FastAPI backend
-│   ├── pyproject.toml                     # Python dependencies, metadata, tool config
-│   ├── alembic.ini
-│   ├── .env                              # local env vars (gitignored)
-│   ├── .env.example                      # committed template showing required env vars
-│   ├── alembic/
-│   │   └── versions/
-│   ├── tests/
-│   │   ├── conftest.py                   # shared fixtures (test db, test client, auth helpers)
-│   │   ├── test_users.py
-│   │   ├── test_accounts.py
-│   │   └── ...
-│   └── src/
-│       └── app/
-│           ├── __init__.py
-│           ├── main.py                   # FastAPI app factory, middleware, lifespan
-│           ├── config/
-│           │   ├── __init__.py
-│           │   ├── settings.py           # Pydantic Settings class (env binding)
-│           │   └── database.py           # async engine, session factory
-│           ├── models/
-│           │   ├── __init__.py
-│           │   ├── user.py
-│           │   ├── account.py
-│           │   ├── transaction.py
-│           │   ├── category.py
-│           │   └── budget.py
-│           ├── schemas/
-│           │   ├── __init__.py
-│           │   ├── user.py               # UserCreate, UserUpdate, UserResponse
-│           │   ├── account.py
-│           │   ├── transaction.py
-│           │   └── ...
-│           ├── repositories/
-│           │   ├── __init__.py
-│           │   ├── base.py               # generic base repo (CRUD methods)
-│           │   ├── user.py               # user-specific queries
-│           │   ├── account.py
-│           │   └── ...
-│           ├── services/
-│           │   ├── __init__.py
-│           │   ├── auth.py               # registration, login, token logic
-│           │   ├── user.py
-│           │   └── ...
-│           ├── routers/
-│           │   ├── __init__.py
-│           │   ├── auth.py
-│           │   ├── user.py
-│           │   └── ...
-│           ├── dependencies/
-│           │   ├── __init__.py
-│           │   ├── database.py           # get_db session dependency
-│           │   └── auth.py               # get_current_user dependency
-│           └── common/
-│               ├── __init__.py
-│               ├── exceptions.py         # custom exception classes
-│               └── responses.py          # response envelope helpers
+├── api/                            # HTTP API application
+│   ├── go.mod                      # module github.com/akhakpouri/finance-tracker/api
+│   ├── .env.example                # committed template of required env vars
+│   ├── cmd/
+│   │   └── api/
+│   │       └── main.go             # entrypoint: load config, open DB, build router, serve
+│   └── internal/
+│       ├── config/                 # API env binding (HTTP port, JWT secret, API prefix)
+│       ├── dto/                    # request/response structs (Create/Update/Response)
+│       ├── service/                # business logic, orchestrates shared repositories
+│       ├── handler/                # Gin handlers + route registration
+│       ├── middleware/             # auth, logging, recovery/error envelope
+│       └── common/                 # response envelope + AppError types (HTTP concerns)
 │
-├── web/                                   # TypeScript frontend (framework TBD)
-│   ├── package.json
-│   ├── tsconfig.json
-│   ├── .env.local                        # frontend env vars (API base URL, etc.)
-│   ├── .env.example
-│   └── src/
-│       └── ...                           # framework-specific structure (determined after framework choice)
+├── internal/
+│   └── shared/                     # shared data layer — API + worker + migration tool
+│       ├── go.mod                  # module github.com/akhakpouri/finance-tracker/internal/shared
+│       ├── config/                 # shared (DB-only) config, e.g. DATABASE_URL
+│       ├── database/               # GORM connection constructor + pool settings
+│       ├── models/                 # GORM entities: user, account, transaction, category, budget (source of truth for the schema)
+│       └── repository/             # repository interfaces + GORM implementations
 │
-└── docs/                                  # shared documentation (optional)
-    └── ...
+├── apps/                           # standalone backend commands (own modules)
+│   ├── migration/                  # module github.com/akhakpouri/finance-tracker/apps/migration — runs GORM AutoMigrate over the shared models
+│   └── worker/                     # module github.com/akhakpouri/finance-tracker/apps/worker — background worker (future)
+│
+├── web/                            # TypeScript frontend (framework TBD)
+│
+└── docs/                           # shared documentation + project memory (docs/project-notes/)
 ```
 
 ### Structure Decisions
 
-- **Monorepo with sibling directories.** `api/` and `web/` sit side by side at the repo root. Avoids nesting one inside the other, which creates deployment and build-tool headaches. Each directory is independently buildable and deployable.
-- **Shared files at the root.** `claude.md`, `README.md`, and `.gitignore` live at the repo root since they describe the whole project. Each app has its own `.env` files for different config needs (API needs database credentials, frontend needs the API base URL).
-- **`src/` layout in `api/`** chosen over flat layout. Prevents accidental imports from the working directory and forces proper package installation. Mirrors the explicit module boundaries familiar from Go and C#.
-- **`pyproject.toml`** is the API's single project manifest. Holds dependencies, project metadata, and tool configuration (pytest, linting, formatting). Managed via a package manager (`uv` recommended for speed, `poetry` as the established alternative).
-- **`config/`** is a directory (not a single file) because the project will accumulate multiple config concerns: database settings, JWT/auth settings, and eventually Redis/Celery config. Each gets its own module within the package.
-- **`dependencies/`** is the FastAPI-specific DI layer. Houses all `Depends()` callables — database session provider, authenticated user extractor, etc. Kept separate from services to prevent circular imports, which is a common pain point in Python when services need sessions that need config.
-- **`common/`** holds cross-cutting concerns: the response envelope helper, custom exception classes, shared constants. Named `common` rather than `utils` to signal "shared plumbing" and discourage it from becoming a junk drawer.
-- **`repositories/base.py`** will contain a generic base class with `get_by_id`, `get_all`, `create`, `update`, `delete`. Entity-specific repositories inherit and extend it. Similar to a generic repository pattern in C#.
-- **`schemas/`** uses Pydantic model inheritance for variants of each entity: `UserCreate` (input for registration), `UserUpdate` (partial updates), `UserResponse` (what the API returns). Keeps request and response shapes explicit.
-- **`web/` structure is deferred** until a frontend framework is chosen. The internal `src/` layout will follow that framework's conventions (e.g. Next.js pages/app directory, Angular modules, Vue composables).
+- **Multi-module workspace, not a single module.** The data layer is a separate module so the future background worker can depend on it without pulling in the API's HTTP/web dependencies, and vice versa. `go.work` ties the modules together for local development.
+- **Shared data layer under `internal/`.** Because internal's parent is the repo root, every sibling module (`api`, `apps/migration`, `apps/worker`) can import `internal/shared/...`, but no external repository can. The privacy of the data layer is enforced by the compiler, for free.
+- **`internal/shared` stays framework-agnostic.** No Gin, no HTTP types, no API DTOs. It must import cleanly into a worker that has no web server. If something web-shaped is tempting to add there, it belongs in `api/` instead.
+- **Connection behavior in `shared`, connection config per-app.** `internal/shared/database` exposes a constructor (DSN in, `*gorm.DB` out) with the pool settings baked in, so every app opens connections identically. Each app loads its own DSN/config from its own environment and passes it in.
+- **Repositories take a `*gorm.DB` via constructor injection.** No package-level/global DB. This lets the API and the worker each wire their own connection into the same repositories, and keeps multi-step writes wrappable in a single `db.Transaction(...)` by the caller.
+- **Models are the schema source of truth.** Migrations are GORM `AutoMigrate` over the structs in `internal/shared/models` — no raw `.sql`, no separate schema definition to keep in sync. The `apps/migration` command is the single owner that runs it; the API and worker do **not** auto-migrate on boot, so they never race. Known limitation: `AutoMigrate` is additive-only (no drops/renames/destructive type changes, no rollback, no data backfills); a non-additive change will need a deliberate one-off and a revisit of this approach (see ADR-011).
+- **DTOs are per-consumer.** The API owns its request/response shapes in `api/internal/dto`. Models (persistence) and DTOs (wire contract) stay strictly separate even when they look alike.
+- **`common` over `utils` for cross-cutting plumbing.** The API's response-envelope and error types live in `api/internal/common`, named to signal "shared plumbing" and discourage a junk drawer. The top-level `apps/` directory holds deployable commands (`migration`, `worker`) — named for what they are (applications), not "utils".
+- **Canonical module paths.** All modules are declared as `github.com/akhakpouri/finance-tracker/...`, matching the GitHub remote so `go get`/`go install` resolve correctly. Locally, `go.work` short-circuits resolution to the on-disk directories regardless.
+- **`web/` structure is deferred** until a frontend framework is chosen.
 
 ## Domain Model
 
@@ -207,30 +171,30 @@ finance-tracker/
 
 ### Entity Design Decisions
 
-- **UUIDs over auto-increment integers** for primary keys. Safer for a multi-client API — IDs are unpredictable and can be generated client-side if needed.
-- **`account_type`, `transaction_type`, `category_type`, `period`** are modeled as Python `Enum` classes mapped to PostgreSQL native enums via Alembic.
-- **Categories have a nullable `user_id`**. When null, the category is a system default (groceries, rent, utilities). When populated, it's user-created. The `is_system` flag makes querying easier without checking for null.
-- **Transfers are modeled as transactions**, not a separate entity. A transfer between accounts creates two transaction records (one expense from the source, one income to the destination) linked by business logic in the service layer. Consider adding a `transfer_id` field later to explicitly link paired transfer transactions.
-- **Budgets tie a user to a category with a spending limit.** The service layer calculates "amount spent in current period" by querying transactions against that category within the date window derived from `start_date` + `period`.
-- **`balance` on Account is a denormalized field.** It gets updated by the service layer when transactions are created/updated/deleted. The source of truth is the sum of transactions, but the cached balance avoids expensive aggregation on every read.
-- **`decimal` for monetary amounts.** Never use float for money. In SQLAlchemy, use `Numeric(precision=12, scale=2)`. In Pydantic schemas, use `Decimal`.
+- **UUIDs over auto-increment integers** for primary keys. Safer for a multi-client API — IDs are unpredictable and can be generated client-side if needed. Generate them in a GORM `BeforeCreate` hook on a shared embedded `Base` struct to stay DB-agnostic.
+- **`account_type`, `transaction_type`, `category_type`, `period`** are modeled as Go named string types with `const` values (e.g. `type AccountType string`), stored as `varchar`. Application-level validation guards the allowed set.
+- **Categories have a nullable `user_id`** (`*uuid.UUID`). When nil, the category is a system default (groceries, rent, utilities). When populated, it's user-created. The `is_system` flag makes querying easier without checking for null.
+- **Transfers are modeled as transactions**, not a separate entity. A transfer creates two transaction records (one expense from the source, one income to the destination) in a single DB transaction. Consider adding a `transfer_id` field later to explicitly link the pair.
+- **Budgets tie a user to a category with a spending limit.** The service layer calculates "amount spent in current period" by querying transactions against that category within the window derived from `start_date` + `period`.
+- **`balance` on Account is a denormalized field.** Updated by the service layer on transaction create/update/delete. Source of truth is the sum of transactions; the cached balance avoids expensive aggregation on every read.
+- **`decimal` for monetary amounts.** Never `float64`. Use `shopspring/decimal.Decimal` in Go with a GORM column type of `numeric(12,2)`.
 
 ## Phased Roadmap
 
 ### Phase 1 — Foundation
-- Project structure and folder layout
-- Database connection (async SQLAlchemy + PostgreSQL)
-- Alembic migration setup
-- Config management via Pydantic Settings
-- User entity wired end-to-end (model → schema → repo → service → router)
+- Multi-module workspace and folder layout (`go.work`, `api`, `internal/shared`, `utils/*`)
+- Database connection (GORM + PostgreSQL) in `internal/shared/database`
+- `apps/migration` command running GORM `AutoMigrate` over the shared models
+- Config management (env-based) — shared DB config + API config
+- User entity wired end-to-end (model → repository → service → DTO → handler)
 - Health check endpoint
-- Error handling middleware
+- Error-handling middleware + response envelope
 
 ### Phase 2 — Authentication & Authorization
 - User registration and login endpoints
 - JWT token issuance and validation
 - Password hashing (bcrypt)
-- `get_current_user` dependency for route protection
+- Auth middleware that resolves the current user and protects routes
 - All subsequent routes require authentication
 
 ### Phase 3 — Core Domain
@@ -238,46 +202,51 @@ finance-tracker/
 - Categories CRUD (system defaults + user-created)
 - Transactions CRUD with filtering (date range, category, account, amount)
 - Pagination on list endpoints
-- Pydantic validators (positive amounts, valid dates, etc.)
+- Request validation via binding tags + custom validators (positive amounts, valid dates)
 
 ### Phase 4 — Business Logic
-- Budget system: set monthly limits per category, calculate spending vs. limits
+- Budget system: set limits per category, calculate spending vs. limits
 - Dashboard/summary endpoint: account balances, monthly spending by category, budget status
-- Account-to-account transfers (atomic, wrapped in DB transaction)
+- Account-to-account transfers (atomic, wrapped in a single `db.Transaction`)
 
 ### Phase 5 — API Maturity
-- Cursor-based or offset pagination as a reusable pattern
+- Reusable offset (and later cursor) pagination
 - Composable sorting and filtering via query parameters
 - Structured logging
 - Consistent API response envelope (success/error shape)
-- Integration tests with TestClient and test database
-- OpenAPI docs enrichment (examples, descriptions, tags)
+- Integration tests with `httptest` and a test database
+- OpenAPI/Swagger docs (e.g. swaggo) with examples and tags
 
-### Phase 6 — Frontend Application
+### Phase 6 — Background Worker
+- Stand up `apps/worker` against the shared data layer
+- Recurring/scheduled transaction processing
+- Move long-running/derived work (e.g. balance recomputation, budget rollups) off the request path
+
+### Phase 7 — Frontend Application
 - Choose TypeScript framework (React/Next.js, Angular, or Vue/Nuxt)
-- Scaffold `web/` directory with framework conventions
+- Scaffold `web/` with framework conventions
 - Auth flow: login/register pages, JWT token storage, protected routes
-- Core UI: accounts list, transaction list with filters, add/edit transaction forms
-- Dashboard: account balances overview, spending by category, budget progress
-- API client layer: typed HTTP client consuming the FastAPI backend
+- Core UI: accounts list, transaction list with filters, add/edit forms
+- Dashboard: balances overview, spending by category, budget progress
+- Typed API client consuming the Go backend
 
-### Phase 7 — Stretch Goals
-- Recurring/scheduled transactions
+### Phase 8 — Stretch Goals
 - CSV import/export
 - Rate limiting
 - Redis caching
-- Background tasks (Celery or FastAPI background tasks)
+- Additional async jobs on the worker
 
 ## Coding Conventions
 
-- **Type hints everywhere.** Coming from Go and C#, lean into Python's type system. All function signatures, return types, and variables should be annotated.
-- **Async by default.** Use `async def` for route handlers, service methods, and repository methods. Use async SQLAlchemy sessions.
-- **One file per concern.** Don't pile multiple routers or models into one file. Keep it modular.
-- **Schemas are not models.** Keep Pydantic schemas (DTOs) and SQLAlchemy models (entities) strictly separated, even when they look similar.
-- **No business logic in routers.** Routers parse and delegate. Services decide. Repositories fetch.
-- **Dependency injection via `Depends()`.** Wire database sessions, services, and auth into route functions declaratively.
-- **Consistent error responses.** Use FastAPI's `HTTPException` with standard status codes and a consistent error body shape.
-- **Migrations are not optional.** Every schema change goes through Alembic. No manual table edits.
+- **Idiomatic Go.** `gofmt`/`goimports` clean, exported identifiers documented, short receiver names, packages named for what they provide.
+- **Errors are values.** Wrap with `fmt.Errorf("...: %w", err)`, check with `errors.Is`/`errors.As`. Repositories translate `gorm.ErrRecordNotFound` into a domain error; services map domain errors to `AppError` (status + code) for the envelope.
+- **`context.Context` first.** Every repository and service method takes `ctx context.Context` as its first parameter and threads it into GORM via `db.WithContext(ctx)`.
+- **Constructor injection, no globals.** Wire dependencies explicitly in `main`. No package-level DB or singletons.
+- **One file per concern.** One repository, model, or handler group per file. Keep it modular.
+- **DTOs are not models.** Keep request/response structs separate from GORM entities, even when they look alike. Map at the boundary.
+- **No business logic in handlers.** Handlers bind and delegate. Services decide. Repositories fetch.
+- **`shared` imports nothing app-specific.** No Gin/HTTP in the data layer.
+- **Schema changes go through the models + `apps/migration`.** Edit the GORM structs in `internal/shared/models`, then run `apps/migration` (`AutoMigrate`). No manual `ALTER` in the database. For a change `AutoMigrate` can't express, treat it as a deliberate exception and revisit ADR-011.
 
 ## Response Envelope (Target)
 
@@ -294,14 +263,14 @@ finance-tracker/
 }
 ```
 
-## Key Python/FastAPI Concepts to Learn
+## Key Go / Gin / GORM Concepts in Play
 
-- `Depends()` for dependency injection (equivalent to C# DI container / Go middleware)
-- Pydantic model inheritance for schema variants (Create, Update, Response)
-- SQLAlchemy relationship loading strategies (lazy, eager, selectin)
-- Alembic autogenerate for migrations
-- `asynccontextmanager` for database session lifecycle
-- FastAPI's automatic OpenAPI spec generation
+- **`go.work` multi-module workspaces** — cross-module local development without `replace` directives.
+- **Go's `internal/` visibility rule** — how it scopes the shared data layer to this repo.
+- **GORM**: model tags, `BeforeCreate` hooks, relationships and preloading, `db.WithContext`, and `db.Transaction` for atomic multi-step writes.
+- **Gin**: route groups, `ShouldBindJSON` + binding validation, middleware chains, and `c.JSON` for the envelope.
+- **Producer- vs consumer-defined interfaces** — starting producer-side in `shared`, with room to move toward consumer-defined interfaces later.
+- **`shopspring/decimal`** semantics for money math (no float rounding).
 
 ## Project Memory System
 
